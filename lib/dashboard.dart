@@ -14,24 +14,20 @@ class _DashboardPageState extends State<DashboardPage> {
   final DataService _service = DataService();
   DashboardData? _data;
   bool _loading = false;
-  String _selectedSection = 'Aircon';
+  String? _selectedSection;
   late final List<String> _availableDates;
-  String _selectedDate = '';
+  String? _selectedDate;
 
   @override
   void initState() {
     super.initState();
     _availableDates = _service.availableDates;
-    _selectedDate = _availableDates.isNotEmpty ? _availableDates.first : '';
     _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final nextData = await _service.fetchSection(
-      _sectionToTpl(_selectedSection),
-      date: _selectedDate.isEmpty ? null : _selectedDate,
-    );
+    final nextData = await _service.fetchDashboard(date: _selectedDate);
     if (!mounted) return;
     setState(() {
       _data = nextData;
@@ -41,10 +37,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _triggerGraph() async {
     setState(() => _loading = true);
-    final next = await _service.triggerGraph(
-      _sectionToTpl(_selectedSection),
-      _selectedDate,
-    );
+    final next = await _service.refresh(date: _selectedDate);
     if (!mounted) return;
     setState(() {
       _data = next;
@@ -68,10 +61,13 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _onDateSelected(String date) async {
     setState(() => _loading = true);
-    final next = await _service.fetchSection(
-      _sectionToTpl(_selectedSection),
-      date: date,
-    );
+    final selectedSection = _selectedSection;
+    final next = selectedSection == null
+        ? await _service.fetchDashboard(date: date)
+        : await _service.fetchSection(
+            _sectionToTpl(selectedSection),
+            date: date,
+          );
     if (!mounted) return;
     setState(() {
       _data = next;
@@ -91,6 +87,21 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'Aircon':
       default:
         return 'meters';
+    }
+  }
+
+  String _sectionDescription(String? label) {
+    if (label == null) return 'Live dashboard overview';
+    switch (label) {
+      case 'Aircon In':
+        return 'Input-side aircon readings';
+      case 'Aircon Net':
+        return 'Network-level aircon data';
+      case 'Office':
+        return 'Office circuit consumption';
+      case 'Aircon':
+      default:
+        return 'Aircon meter/status data';
     }
   }
 
@@ -170,7 +181,8 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _headerCard(DashboardData data) {
-    final totals = data.dailyUsed.map((e) => e['y'] as double).toList();
+    final statsWindow = data.dailyUsed.skip(1).take(30).toList();
+    final totals = statsWindow.map((e) => e.value).toList();
     final total = totals.isEmpty
         ? 0.0
         : totals.reduce((value, element) => value + element);
@@ -192,12 +204,24 @@ class _DashboardPageState extends State<DashboardPage> {
               children: [
                 Row(
                   children: [
-                    const Text(
-                      'Data source: embedded sample',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                    Flexible(
+                      child: Text(
+                        data.sourceLabel,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: data.live
+                              ? Colors.green.shade800
+                              : Colors.orange.shade800,
+                        ),
+                      ),
                     ),
                     const Spacer(),
-                    TextButton(onPressed: _load, child: const Text('Refresh')),
+                    TextButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.sync, size: 18),
+                      label: const Text('Refresh'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -234,6 +258,11 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
                 const SizedBox(height: 12),
+                Text(
+                  _sectionDescription(_selectedSection),
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 8),
                 if (isCompact)
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -246,7 +275,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         alignment: Alignment.centerRight,
                         child: TextButton(
                           onPressed: _triggerGraph,
-                          child: const Text('Refresh graph'),
+                          child: const Text('Refresh charts'),
                         ),
                       ),
                     ],
@@ -263,7 +292,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       const SizedBox(width: 12),
                       TextButton(
                         onPressed: _triggerGraph,
-                        child: const Text('Refresh graph'),
+                        child: const Text('Refresh charts'),
                       ),
                     ],
                   ),
@@ -280,10 +309,16 @@ class _DashboardPageState extends State<DashboardPage> {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 520;
         final labels = data.labels;
-        final maxY = _chartMax([...data.hourlyBar, ...data.hourlyBar2]);
+        final bars = data.barSeries;
+        final lines = data.lineSeries;
+        final allValues = data.hourlySeries
+            .expand((series) => series.points)
+            .map((point) => point.y)
+            .toList();
+        final maxY = _chartMax(allValues);
         return _panel(
-          title: 'Hourly Usage',
-          subtitle: 'Mixed bars and trend lines',
+          title: 'Hourly Energy Comparison',
+          subtitle: 'Solar, Office, and Total by hour',
           child: SizedBox(
             height: isCompact ? 240 : 320,
             child: Stack(
@@ -296,29 +331,27 @@ class _DashboardPageState extends State<DashboardPage> {
                     gridData: FlGridData(show: true, drawVerticalLine: true),
                     borderData: FlBorderData(show: false),
                     barGroups: List.generate(24, (i) {
-                      final y = i < data.hourlyBar.length
-                          ? data.hourlyBar[i]
-                          : 0.0;
-                      final y2 = i < data.hourlyBar2.length
-                          ? data.hourlyBar2[i]
-                          : 0.0;
+                      final rods = bars.take(isCompact ? 2 : 3).map((series) {
+                        final y = _pointY(series.points, labels, i);
+                        return BarChartRodData(
+                          toY: y,
+                          color: series.color,
+                          width: isCompact ? 6 : 8,
+                          borderRadius: BorderRadius.circular(2),
+                        );
+                      }).toList();
                       return BarChartGroupData(
                         x: i,
                         barsSpace: isCompact ? 3 : 4,
-                        barRods: [
-                          BarChartRodData(
-                            toY: y,
-                            color: const Color(0xFF1997FF),
-                            width: isCompact ? 6 : 8,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                          BarChartRodData(
-                            toY: y2,
-                            color: const Color(0xFFFF8A00),
-                            width: isCompact ? 6 : 8,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ],
+                        barRods: rods.isEmpty
+                            ? [
+                                BarChartRodData(
+                                  toY: 0,
+                                  color: Colors.transparent,
+                                  width: isCompact ? 6 : 8,
+                                ),
+                              ]
+                            : rods,
                       );
                     }),
                     titlesData: _hourTitles(
@@ -335,43 +368,28 @@ class _DashboardPageState extends State<DashboardPage> {
                     gridData: FlGridData(show: false),
                     borderData: FlBorderData(show: false),
                     titlesData: FlTitlesData(show: false),
-                    lineBarsData: [
-                      LineChartBarData(
+                    lineBarsData: lines.take(isCompact ? 4 : 8).map((series) {
+                      return LineChartBarData(
                         spots: List.generate(
-                          24,
+                          labels.length,
                           (i) => FlSpot(
                             i.toDouble(),
-                            i < data.hourlyBar.length ? data.hourlyBar[i] : 0.0,
+                            _pointY(series.points, labels, i),
                           ),
                         ),
                         isCurved: true,
-                        color: const Color(0xFF1A39FF),
-                        barWidth: isCompact ? 2.5 : 3,
-                        dotData: FlDotData(show: false),
-                      ),
-                      LineChartBarData(
-                        spots: List.generate(
-                          24,
-                          (i) => FlSpot(
-                            i.toDouble(),
-                            i < data.hourlyBar2.length
-                                ? data.hourlyBar2[i]
-                                : 0.0,
-                          ),
-                        ),
-                        isCurved: true,
-                        color: const Color(0xFF7BC67E),
+                        color: series.color,
                         barWidth: isCompact ? 2 : 2.5,
                         dotData: FlDotData(show: false),
-                      ),
-                    ],
+                      );
+                    }).toList(),
                   ),
                 ),
                 Positioned(
                   top: 4,
                   left: 0,
                   right: 0,
-                  child: _chartLegend(compact: isCompact),
+                  child: _chartLegend(data.hourlySeries, compact: isCompact),
                 ),
               ],
             ),
@@ -385,13 +403,17 @@ class _DashboardPageState extends State<DashboardPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 520;
-        final barValues = data.dailyUsed
-            .map((e) => (e['y'] as double) * 0.9)
-            .toList();
-        final maxY = _chartMax(barValues, min: 1.0, padding: 2.0);
+        final days = data.dailyUsed.take(31).toList();
+        final barValues = days.map((e) => e.value).toList();
+        final trendValues = days.map((e) => e.trendValue ?? e.value).toList();
+        final maxY = _chartMax(
+          [...barValues, ...trendValues],
+          min: 1.0,
+          padding: 2.0,
+        );
         return _panel(
-          title: 'Daily Usage',
-          subtitle: 'Recent days and live reading trend',
+          title: '30-Day Solar Trend',
+          subtitle: 'Daily totals with low-output highlights',
           child: SizedBox(
             height: isCompact ? 220 : 280,
             child: Stack(
@@ -402,7 +424,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     maxY: maxY,
                     gridData: FlGridData(show: true, drawVerticalLine: false),
                     borderData: FlBorderData(show: false),
-                    barGroups: List.generate(data.dailyUsed.length, (i) {
+                    barGroups: List.generate(days.length, (i) {
                       final value = barValues[i];
                       return BarChartGroupData(
                         x: i,
@@ -410,7 +432,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           BarChartRodData(
                             toY: value,
                             width: isCompact ? 8 : 10,
-                            color: i % 4 == 0
+                            color: days[i].highlighted
                                 ? const Color(0xFFFF8D8D)
                                 : const Color(0xFF9EC5E6),
                           ),
@@ -418,7 +440,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       );
                     }),
                     titlesData: _dayTitles(
-                      data.dailyUsed,
+                      days,
                       step: isCompact ? 2 : 1,
                       compact: isCompact,
                     ),
@@ -434,11 +456,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     lineBarsData: [
                       LineChartBarData(
                         spots: List.generate(
-                          data.dailyUsed.length,
-                          (i) => FlSpot(
-                            i.toDouble(),
-                            data.dailyUsed[i]['y'] as double,
-                          ),
+                          days.length,
+                          (i) => FlSpot(i.toDouble(), trendValues[i]),
                         ),
                         isCurved: true,
                         color: Colors.red,
@@ -457,9 +476,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _statusCard(DashboardData data) {
-    final latest = data.dailyUsed.isNotEmpty
-        ? data.dailyUsed.first['y'] as double
-        : 0.0;
+    final latest = data.dailyUsed.isNotEmpty ? data.dailyUsed.first.value : 0.0;
     return _panel(
       title: 'Status',
       subtitle: 'Current device state and recent readings',
@@ -480,19 +497,40 @@ class _DashboardPageState extends State<DashboardPage> {
             ],
           ),
           const SizedBox(height: 14),
+          _statusBar(
+            label: data.status.activationText,
+            value: data.status.activationPercent,
+            active: true,
+          ),
+          const SizedBox(height: 8),
+          _statusBar(
+            label: data.status.meterText,
+            value: data.status.meterPercent,
+            active: false,
+          ),
+          const SizedBox(height: 12),
           Text(
-            'Voltage: 1.22 Amps: 0.00    Pump is off. ${latest.toStringAsFixed(2)}A',
+            'Device IP: ${data.status.deviceIp}    Latest daily: ${latest.toStringAsFixed(2)} kWh',
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: [
-              _readingChip('Voltage: 12.66', Colors.blueGrey.shade50),
-              _readingChip('Amps: 0.08', Colors.blueGrey.shade50),
-              _readingChip('Pump is off.', Colors.red.shade50),
-            ],
+            children: data.status.readings.isEmpty
+                ? [
+                    _readingChip(
+                      'No live readings available',
+                      Colors.orange.shade50,
+                    ),
+                  ]
+                : data.status.readings.map((reading) {
+                    final isPump = reading.toLowerCase().contains('pump');
+                    return _readingChip(
+                      reading,
+                      isPump ? Colors.green.shade50 : Colors.blueGrey.shade50,
+                    );
+                  }).toList(),
           ),
         ],
       ),
@@ -570,7 +608,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   FlTitlesData _dayTitles(
-    List<Map<String, dynamic>> dailyUsed, {
+    List<DailyPoint> dailyUsed, {
     int step = 1,
     bool compact = false,
   }) {
@@ -598,7 +636,7 @@ class _DashboardPageState extends State<DashboardPage> {
               return const SizedBox.shrink();
             }
             if (step > 1 && idx % step != 0) return const SizedBox.shrink();
-            final date = dailyUsed[idx]['x'] as String;
+            final date = dailyUsed[idx].date;
             final label = compact && date.length >= 5
                 ? date.substring(5)
                 : date;
@@ -614,38 +652,23 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _chartLegend({bool compact = false}) {
+  Widget _chartLegend(List<HourlySeries> series, {bool compact = false}) {
     final size = compact ? 10.0 : 14.0;
     final fontSize = compact ? 10.0 : 12.0;
+    final visible = series.take(compact ? 4 : 8).toList();
     return Wrap(
       spacing: 10,
       runSpacing: 8,
-      children: [
-        _LegendDot(
-          color: const Color(0xFF1997FF),
-          text: 'Bar A',
-          size: size,
-          fontSize: fontSize,
-        ),
-        _LegendDot(
-          color: const Color(0xFFFF8A00),
-          text: 'Bar B',
-          size: size,
-          fontSize: fontSize,
-        ),
-        _LegendDot(
-          color: const Color(0xFF1A39FF),
-          text: 'Trend A',
-          size: size,
-          fontSize: fontSize,
-        ),
-        _LegendDot(
-          color: const Color(0xFF7BC67E),
-          text: 'Trend B',
-          size: size,
-          fontSize: fontSize,
-        ),
-      ],
+      children: visible
+          .map(
+            (item) => _LegendDot(
+              color: item.color,
+              text: item.label,
+              size: size,
+              fontSize: fontSize,
+            ),
+          )
+          .toList(),
     );
   }
 
@@ -719,6 +742,15 @@ class _DashboardPageState extends State<DashboardPage> {
     final maxValue = _maxOf(values);
     final padded = maxValue + padding + (maxValue * 0.1);
     return padded < min ? min : padded;
+  }
+
+  double _pointY(List<ChartPoint> points, List<String> labels, int index) {
+    if (index < 0 || index >= labels.length) return 0;
+    final label = labels[index];
+    for (final point in points) {
+      if (point.x == label) return point.y;
+    }
+    return index < points.length ? points[index].y : 0;
   }
 }
 
