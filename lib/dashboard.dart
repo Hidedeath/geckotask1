@@ -107,10 +107,38 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'Office':
         return 'office';
       case 'Aircon':
+        return 'aircon';
       case 'Main':
       default:
         return 'meters';
     }
+  }
+
+  bool get _isMainSection => _selectedSection == 'Main';
+  bool get _isAirconSection => _selectedSection.startsWith('Aircon');
+
+  String get _hourlyChartTitle {
+    if (_isMainSection) return 'Main System Hourly';
+    if (_isAirconSection) return 'Aircon Circuit Hourly';
+    return '$_selectedSection Hourly';
+  }
+
+  String get _hourlyChartSubtitle {
+    if (_isMainSection) return 'Solar generation and total consumption';
+    if (_isAirconSection) return 'Circuit-specific cooling demand';
+    return 'Circuit-specific energy usage';
+  }
+
+  String get _monthlyChartTitle {
+    if (_isMainSection) return 'Main 30-Day Trend';
+    if (_isAirconSection) return 'Aircon 30-Day Usage Trend';
+    return '$_selectedSection 30-Day Trend';
+  }
+
+  String get _monthlyChartSubtitle {
+    if (_isMainSection) return 'Daily system kWh with smoothed performance trend';
+    if (_isAirconSection) return 'Daily aircon kWh with smoothed usage trend';
+    return 'Daily circuit kWh with smoothed usage trend';
   }
 
   Future<void> _confirmPump(bool on) async {
@@ -479,8 +507,8 @@ class _DashboardPageState extends State<DashboardPage> {
             : 760.0;
         final chartHeight = isCompact ? 240.0 : 320.0;
         return _panel(
-          title: 'Hourly Usage',
-          subtitle: 'Mixed bars and trend lines',
+          title: _hourlyChartTitle,
+          subtitle: _hourlyChartSubtitle,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -626,142 +654,224 @@ class _DashboardPageState extends State<DashboardPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 520;
-        final barValues = data.dailyUsed
-            .map((e) => (e['y'] as double) * 0.9)
-            .toList();
-        final maxY = _chartMax(barValues, min: 1.0, padding: 2.0);
-        final dailyTotal = data.dailyUsed.fold<double>(
+        final monthlyTrend = data.dailyUsed.reversed.toList();
+        final barValues = monthlyTrend.map((e) => e['y'] as double).toList();
+        final trendValues = _movingAverage(barValues, radius: 2);
+        final maxY = _chartMax(
+          [...barValues, ...trendValues],
+          min: 1.0,
+          padding: 2.0,
+        );
+        final dailyTotal = monthlyTrend.fold<double>(
           0,
           (sum, item) => sum + (item['y'] as double),
         );
-        final dailyAverage = data.dailyUsed.isEmpty
+        final dailyAverage = monthlyTrend.isEmpty
             ? 0.0
-            : dailyTotal / data.dailyUsed.length;
-        final chartWidth = constraints.maxWidth > data.dailyUsed.length * 38.0
+            : dailyTotal / monthlyTrend.length;
+        final chartWidth = constraints.maxWidth > monthlyTrend.length * 38.0
             ? constraints.maxWidth
-            : data.dailyUsed.length * 38.0;
+            : monthlyTrend.length * 38.0;
+        final trendMaxX = monthlyTrend.isEmpty
+            ? 0.5
+            : monthlyTrend.length - 0.5;
         final axisWidth = isCompact ? 34.0 : 40.0;
         final chartHeight = isCompact ? 220.0 : 280.0;
         return _panel(
-          title: 'Daily Usage',
-          subtitle: 'Recent days and live reading trend',
-          child: SizedBox(
-            height: chartHeight,
-            child: Stack(
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+          title: _monthlyChartTitle,
+          subtitle: _monthlyChartSubtitle,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _dailyLegend(compact: isCompact),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: chartHeight,
+                child: Stack(
                   children: [
-                    _fixedYAxis(
-                      maxY: maxY,
-                      width: axisWidth,
-                      bottomReserved: (isCompact ? 22 : 28) + 18,
-                      interval: 5,
-                      decimals: 0,
-                      compact: isCompact,
-                    ),
-                    Expanded(
-                      child: Scrollbar(
-                        controller: _dailyScrollController,
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
-                          controller: _dailyScrollController,
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: chartWidth,
-                            height: chartHeight,
-                            child: Stack(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 18),
-                                  child: BarChart(
-                                    BarChartData(
-                                      minY: 0,
-                                      maxY: maxY,
-                                      gridData: FlGridData(
-                                        show: true,
-                                        drawVerticalLine: false,
-                                        getDrawingHorizontalLine: (v) => FlLine(
-                                          color: Colors.grey.withOpacity(0.1),
-                                          strokeWidth: 1,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _fixedYAxis(
+                          maxY: maxY,
+                          width: axisWidth,
+                          bottomReserved: (isCompact ? 22 : 28) + 18,
+                          interval: 5,
+                          decimals: 0,
+                          compact: isCompact,
+                        ),
+                        Expanded(
+                          child: Scrollbar(
+                            controller: _dailyScrollController,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _dailyScrollController,
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: chartWidth,
+                                height: chartHeight,
+                                child: Stack(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 18,
+                                      ),
+                                      child: BarChart(
+                                        BarChartData(
+                                          alignment:
+                                              BarChartAlignment.spaceAround,
+                                          minY: 0,
+                                          maxY: maxY,
+                                          gridData: FlGridData(
+                                            show: true,
+                                            drawVerticalLine: false,
+                                            getDrawingHorizontalLine: (v) =>
+                                                FlLine(
+                                                  color: Colors.grey
+                                                      .withOpacity(0.1),
+                                                  strokeWidth: 1,
+                                                ),
+                                          ),
+                                          borderData: FlBorderData(show: false),
+                                          barTouchData: BarTouchData(
+                                            enabled: true,
+                                            touchTooltipData:
+                                                BarTouchTooltipData(
+                                                  tooltipPadding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 6,
+                                                      ),
+                                                  tooltipMargin: 8,
+                                                  fitInsideHorizontally: true,
+                                                  fitInsideVertically: true,
+                                                  getTooltipColor: (_) =>
+                                                      Colors.black87,
+                                                  getTooltipItem:
+                                                      (
+                                                        group,
+                                                        groupIndex,
+                                                        rod,
+                                                        rodIndex,
+                                                      ) {
+                                                        return BarTooltipItem(
+                                                          _dailyTooltipText(
+                                                            monthlyTrend,
+                                                            groupIndex,
+                                                            rod.toY,
+                                                            trendValues[groupIndex],
+                                                          ),
+                                                          const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 11,
+                                                            fontWeight:
+                                                                FontWeight.w700,
+                                                          ),
+                                                          textAlign:
+                                                              TextAlign.left,
+                                                        );
+                                                      },
+                                                ),
+                                          ),
+                                          barGroups: List.generate(
+                                            monthlyTrend.length,
+                                            (i) {
+                                              final date = DateTime.parse(
+                                                monthlyTrend[i]['x'] as String,
+                                              );
+                                              return BarChartGroupData(
+                                                x: i,
+                                                barRods: [
+                                                  BarChartRodData(
+                                                    toY: barValues[i],
+                                                    width: isCompact ? 8 : 10,
+                                                    color: _isSunday(date)
+                                                        ? const Color(
+                                                            0xFFFF8D8D,
+                                                          )
+                                                        : const Color(
+                                                            0xFF9EC5E6,
+                                                          ),
+                                                  ),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                          titlesData: _dayTitles(
+                                            monthlyTrend,
+                                            step: isCompact ? 3 : 1,
+                                            compact: isCompact,
+                                            showLeft: false,
+                                          ),
                                         ),
                                       ),
-                                      borderData: FlBorderData(show: false),
-                                      barGroups: List.generate(
-                                        data.dailyUsed.length,
-                                        (i) {
-                                          return BarChartGroupData(
-                                            x: i,
-                                            barRods: [
-                                              BarChartRodData(
-                                                toY: barValues[i],
-                                                width: isCompact ? 8 : 10,
-                                                color: i % 4 == 0
-                                                    ? const Color(0xFFFF8D8D)
-                                                    : const Color(0xFF9EC5E6),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 18,
+                                      ),
+                                      child: IgnorePointer(
+                                        child: LineChart(
+                                          LineChartData(
+                                            minX: -0.5,
+                                            maxX: trendMaxX,
+                                            minY: 0,
+                                            maxY: maxY,
+                                            gridData: FlGridData(show: false),
+                                            borderData: FlBorderData(
+                                              show: false,
+                                            ),
+                                            titlesData: FlTitlesData(
+                                              show: false,
+                                            ),
+                                            lineTouchData: const LineTouchData(
+                                              enabled: false,
+                                            ),
+                                            lineBarsData: [
+                                              LineChartBarData(
+                                                spots: List.generate(
+                                                  trendValues.length,
+                                                  (i) => FlSpot(
+                                                    i.toDouble(),
+                                                    trendValues[i],
+                                                  ),
+                                                ),
+                                                isCurved: true,
+                                                color: Colors.redAccent,
+                                                barWidth: isCompact ? 2.5 : 3,
+                                                dotData: const FlDotData(
+                                                  show: true,
+                                                ),
                                               ),
                                             ],
-                                          );
-                                        },
-                                      ),
-                                      titlesData: _dayTitles(
-                                        data.dailyUsed,
-                                        step: isCompact ? 3 : 1,
-                                        compact: isCompact,
-                                        showLeft: false,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 18),
-                                  child: LineChart(
-                                    LineChartData(
-                                      minY: 0,
-                                      maxY: maxY,
-                                      gridData: FlGridData(show: false),
-                                      borderData: FlBorderData(show: false),
-                                      titlesData: FlTitlesData(show: false),
-                                      lineBarsData: [
-                                        LineChartBarData(
-                                          spots: List.generate(
-                                            data.dailyUsed.length,
-                                            (i) => FlSpot(
-                                              i.toDouble(),
-                                              data.dailyUsed[i]['y'] as double,
-                                            ),
                                           ),
-                                          isCurved: true,
-                                          color: Colors.redAccent,
-                                          barWidth: isCompact ? 2.5 : 3,
-                                          dotData: const FlDotData(show: true),
                                         ),
-                                      ],
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ),
-                              ],
+                              ),
                             ),
                           ),
+                        ),
+                      ],
+                    ),
+                    Positioned(
+                      right: 2,
+                      bottom: 0,
+                      child: Text(
+                        'Average (of last 30 days): ${dailyAverage.toStringAsFixed(2)}kWh Total: ${dailyTotal.toStringAsFixed(2)}kWh',
+                        style: TextStyle(
+                          color: Colors.grey.shade300,
+                          fontSize: isCompact ? 9 : 10,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                   ],
                 ),
-                Positioned(
-                  right: 2,
-                  bottom: 0,
-                  child: Text(
-                    'Average (of last 30 days): ${dailyAverage.toStringAsFixed(2)}kWh Total: ${dailyTotal.toStringAsFixed(2)}kWh',
-                    style: TextStyle(
-                      color: Colors.grey.shade300,
-                      fontSize: isCompact ? 9 : 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -772,53 +882,171 @@ class _DashboardPageState extends State<DashboardPage> {
     final latest = data.dailyUsed.isNotEmpty
         ? data.dailyUsed.first['y'] as double
         : 0.0;
+    final readingTime = '${_legendDate(_selectedDate)} 11:17';
     return _panel(
       title: 'Status',
       subtitle: 'Current device state and recent readings',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent,
-                  foregroundColor: Colors.black,
-                ),
-                onPressed: () => _confirmPump(true),
-                child: const Text(
-                  'Pump On',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: () => _confirmPump(false),
-                child: const Text(
-                  'Pump Off',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
+          _statusProgressBar(value: 0.66, label: '66% ($readingTime)'),
+          const SizedBox(height: 4),
+          _statusActionLabels(),
+          const SizedBox(height: 8),
+          _statusProgressBar(
+            value: 1,
+            label: '100% (10978742.00) ($readingTime)',
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 6),
           Text(
-            'Voltage: 1.22 Amps: 0.00    Pump is off. ${latest.toStringAsFixed(2)}A',
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            'Voltage: 30.80 Amps: 12.21        Voltage: 42.73 Amps: 0.80        Pump is off. ${latest.toStringAsFixed(2)}A',
+            style: TextStyle(
+              color: Colors.grey.shade300,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _readingChip('Voltage: 12.66', Colors.blueGrey.shade800),
-              _readingChip('Amps: 0.08', Colors.blueGrey.shade800),
-              _readingChip('Pump is off.', Colors.red.shade900),
-            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _dailyLegend({bool compact = false}) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 14,
+      runSpacing: 8,
+      children: [
+        _StaticLegendDot(
+          color: Colors.redAccent,
+          text: 'Trend',
+          size: compact ? 10 : 14,
+          fontSize: compact ? 10 : 12,
+        ),
+        _StaticLegendDot(
+          color: const Color(0xFFFF8D8D),
+          text: 'Sundays',
+          size: compact ? 10 : 14,
+          fontSize: compact ? 10 : 12,
+        ),
+        _StaticLegendDot(
+          color: const Color(0xFF9EC5E6),
+          text: 'Days',
+          size: compact ? 10 : 14,
+          fontSize: compact ? 10 : 12,
+        ),
+      ],
+    );
+  }
+
+  String _dailyTooltipText(
+    List<Map<String, dynamic>> dailyUsed,
+    int index,
+    double value,
+    double? trendValue,
+  ) {
+    if (index < 0 || index >= dailyUsed.length) {
+      final trendText = trendValue == null
+          ? ''
+          : '\nTrend: ${trendValue.toStringAsFixed(2)}';
+      return 'Days: ${value.toStringAsFixed(2)}$trendText';
+    }
+
+    final date = DateTime.parse(dailyUsed[index]['x'] as String);
+    final day = _weekdayLabel(date.weekday);
+    final month = date.month.toString().padLeft(2, '0');
+    final dateDay = date.day.toString().padLeft(2, '0');
+    final marker = _isSunday(date) ? 'Sunday\n' : '';
+    final trendText = trendValue == null
+        ? ''
+        : '\nTrend: ${trendValue.toStringAsFixed(2)}';
+    return '$day $month/$dateDay\n${marker}Days: ${value.toStringAsFixed(2)}$trendText';
+  }
+
+  bool _isSunday(DateTime date) => date.weekday == DateTime.sunday;
+
+  List<double> _movingAverage(List<double> values, {int radius = 2}) {
+    if (values.isEmpty) return const [];
+
+    return List<double>.generate(values.length, (index) {
+      final start = (index - radius).clamp(0, values.length - 1).toInt();
+      final end = (index + radius).clamp(0, values.length - 1).toInt();
+      var total = 0.0;
+
+      for (var i = start; i <= end; i++) {
+        total += values[i];
+      }
+
+      return total / (end - start + 1);
+    });
+  }
+
+  String _weekdayLabel(int weekday) {
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return labels[weekday - 1];
+  }
+
+  Widget _statusActionLabels() {
+    return Row(
+      children: [
+        InkWell(
+          onTap: () => _confirmPump(true),
+          mouseCursor: SystemMouseCursors.click,
+          child: const Text(
+            'Turn On!',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const Spacer(),
+        InkWell(
+          onTap: () => _confirmPump(false),
+          mouseCursor: SystemMouseCursors.click,
+          child: const Text(
+            'Turn Off!',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusProgressBar({required double value, required String label}) {
+    final clampedValue = value.clamp(0.0, 1.0);
+    return SizedBox(
+      height: 24,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade500),
+              color: Colors.white.withValues(alpha: 0.04),
+            ),
+          ),
+          FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: clampedValue,
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: Colors.lightBlue.shade200),
+            ),
+          ),
+          Center(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -995,6 +1223,8 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _chartLegend({bool compact = false}) {
     final selectedDate = _legendDate(_selectedDate);
     final previousDate = _legendDate(_previousDate(_selectedDate));
+    final trendLabel = _isMainSection ? 'Solar' : 'Trend';
+    final barLabel = _isMainSection ? 'Total' : 'Usage';
 
     return Wrap(
       spacing: 10,
@@ -1002,7 +1232,7 @@ class _DashboardPageState extends State<DashboardPage> {
       children: [
         _LegendDot(
           color: const Color(0xFF1A39FF),
-          text: 'S: $previousDate',
+          text: '$trendLabel: $previousDate',
           isActive: _showPreviousTrend,
           onTap: () => setState(() => _showPreviousTrend = !_showPreviousTrend),
           size: compact ? 10 : 14,
@@ -1010,7 +1240,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         _LegendDot(
           color: const Color(0xFF7BC67E),
-          text: 'S: $selectedDate',
+          text: '$trendLabel: $selectedDate',
           isActive: _showSelectedTrend,
           onTap: () => setState(() => _showSelectedTrend = !_showSelectedTrend),
           size: compact ? 10 : 14,
@@ -1018,7 +1248,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         _LegendDot(
           color: const Color(0xFF1997FF),
-          text: previousDate,
+          text: '$barLabel: $previousDate',
           isActive: _showPreviousBar,
           onTap: () => setState(() => _showPreviousBar = !_showPreviousBar),
           size: compact ? 10 : 14,
@@ -1026,7 +1256,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
         _LegendDot(
           color: const Color(0xFFFF8A00),
-          text: selectedDate,
+          text: '$barLabel: $selectedDate',
           isActive: _showSelectedBar,
           onTap: () => setState(() => _showSelectedBar = !_showSelectedBar),
           size: compact ? 10 : 14,
@@ -1051,20 +1281,6 @@ class _DashboardPageState extends State<DashboardPage> {
     final month = date.month.toString().padLeft(2, '0');
     final day = date.day.toString().padLeft(2, '0');
     return '$month/$day/${date.year}';
-  }
-
-  Widget _readingChip(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 12, color: Colors.white),
-      ),
-    );
   }
 
   double _maxOf(List<double> values) {
@@ -1131,6 +1347,35 @@ class _LegendDot extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _StaticLegendDot extends StatelessWidget {
+  final Color color;
+  final String text;
+  final double size;
+  final double fontSize;
+
+  const _StaticLegendDot({
+    required this.color,
+    required this.text,
+    this.size = 14,
+    this.fontSize = 12,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: size, height: size, color: color),
+        const SizedBox(width: 6),
+        Text(
+          text,
+          style: TextStyle(fontSize: fontSize, color: Colors.grey),
+        ),
+      ],
     );
   }
 }

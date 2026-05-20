@@ -158,29 +158,29 @@ class DataService {
 
     final hourlyBar = List<double>.generate(
       24,
-      (i) => _seriesValue(
+      (i) => _hourlyValueForSection(
+        tpl: tpl,
         hour: i,
         base: base,
         seed: seed,
         tick: tick,
-        scale: 0.18,
-        drift: 0.8,
+        secondary: false,
       ),
     );
 
     final hourlyBar2 = List<double>.generate(
       24,
-      (i) => _seriesValue(
+      (i) => _hourlyValueForSection(
+        tpl: tpl,
         hour: i,
-        base: base * 0.8,
+        base: base,
         seed: seed + 3,
         tick: tick,
-        scale: 0.12,
-        drift: 0.6,
+        secondary: true,
       ),
     );
 
-    final dailyUsed = _buildDailyWindow(date, seed, base, tick);
+    final dailyUsed = _buildDailyWindow(tpl, date, seed, base, tick);
 
     return DashboardData(
       labels: labels,
@@ -231,7 +231,55 @@ class DataService {
     return _round(value);
   }
 
+  double _hourlyValueForSection({
+    required String tpl,
+    required int hour,
+    required double base,
+    required int seed,
+    required int tick,
+    required bool secondary,
+  }) {
+    if (tpl == 'meters') {
+      final daylight = exp(-pow((hour - 12) / 4.2, 2));
+      final eveningLoad = exp(-pow((hour - 19) / 3.0, 2));
+      final morningLoad = exp(-pow((hour - 8) / 2.6, 2));
+      final jitter = ((seed + hour) % 5) * 0.03;
+      final value = secondary
+          ? 0.35 + daylight * 1.05 + jitter + tick * 0.03
+          : 0.45 + morningLoad * 0.35 + eveningLoad * 0.85 + jitter;
+      return _round(value);
+    }
+
+    if (tpl == 'aircon' || tpl == 'in' || tpl == 'savings') {
+      final workHours = exp(-pow((hour - 14) / 4.5, 2));
+      final lateDay = exp(-pow((hour - 17) / 2.8, 2));
+      final idle = tpl == 'savings' ? 0.25 : 0.45;
+      final scale = tpl == 'in' ? 1.0 : tpl == 'savings' ? 0.65 : 1.25;
+      final jitter = ((seed + hour) % 6) * 0.025;
+      final value = secondary
+          ? idle + (workHours * scale) + jitter + tick * 0.03
+          : idle + (lateDay * scale * 0.9) + jitter;
+      return _round(value);
+    }
+
+    if (tpl == 'office') {
+      final officeHours = exp(-pow((hour - 13) / 5.5, 2));
+      final jitter = ((seed + hour) % 4) * 0.02;
+      return _round(0.18 + officeHours * (secondary ? 0.42 : 0.36) + jitter);
+    }
+
+    return _seriesValue(
+      hour: hour,
+      base: base,
+      seed: seed,
+      tick: tick,
+      scale: secondary ? 0.12 : 0.18,
+      drift: secondary ? 0.6 : 0.8,
+    );
+  }
+
   List<Map<String, dynamic>> _buildDailyWindow(
+    String tpl,
     String date,
     int seed,
     double base,
@@ -241,8 +289,16 @@ class DataService {
     final items = <Map<String, dynamic>>[];
     for (var i = 0; i < 30; i++) {
       final day = start.subtract(Duration(days: i));
-      final level =
-          base * 6 + ((seed + i) % 9) * 0.8 + (i % 6) * 0.45 + tick * 0.2;
+      final weekly = (i % 7) * 0.35;
+      final variation = ((seed + i) % 9) * 0.45;
+      final level = switch (tpl) {
+        'meters' => 13.5 + variation + weekly + sin(i / 3) * 1.8 + tick * 0.2,
+        'aircon' => 8.8 + variation + weekly + cos(i / 4) * 1.3 + tick * 0.2,
+        'in' => 7.6 + variation + weekly + cos(i / 4) * 1.1 + tick * 0.2,
+        'savings' => 5.2 + variation + weekly + sin(i / 5) * 0.9 + tick * 0.2,
+        'office' => 3.4 + variation * 0.6 + weekly * 0.5 + tick * 0.1,
+        _ => base * 6 + variation + weekly + tick * 0.2,
+      };
       items.add({'x': _formatDate(day), 'y': _round(level)});
     }
     return items;
