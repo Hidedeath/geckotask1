@@ -8,7 +8,12 @@ class EnergyDataPoint {
   final double office;
   final double total;
 
-  EnergyDataPoint({required this.time, required this.solar, required this.office, required this.total});
+  EnergyDataPoint({
+    required this.time,
+    required this.solar,
+    required this.office,
+    required this.total,
+  });
 }
 
 class DashboardData {
@@ -29,7 +34,8 @@ class DataService {
   final Map<String, int> _graphTicks = {};
 
   // --- LIVE STREAM VARIABLES ---
-  final StreamController<List<EnergyDataPoint>> _controller = StreamController<List<EnergyDataPoint>>.broadcast();
+  final StreamController<List<EnergyDataPoint>> _controller =
+      StreamController<List<EnergyDataPoint>>.broadcast();
   Timer? _timer;
   final List<EnergyDataPoint> _currentLiveData = [];
   final Random _random = Random();
@@ -95,25 +101,30 @@ class DataService {
         break;
     }
 
-    _currentLiveData.add(EnergyDataPoint(
-      time: _currentTimeIndex,
-      solar: solar,
-      office: office,
-      total: total,
-    ));
+    _currentLiveData.add(
+      EnergyDataPoint(
+        time: _currentTimeIndex,
+        solar: solar,
+        office: office,
+        total: total,
+      ),
+    );
 
     if (_currentLiveData.length > 20) {
       _currentLiveData.removeAt(0);
     }
     _currentTimeIndex += 1;
-    
+
     if (!_controller.isClosed) {
       _controller.add(List.from(_currentLiveData));
     }
   }
 
   // --- TEAMMATE'S STATIC DATA METHODS ---
-  Future<DashboardData> fetchDashboard({String tpl = 'meters', String? date}) async {
+  Future<DashboardData> fetchDashboard({
+    String tpl = 'meters',
+    String? date,
+  }) async {
     return fetchSection(tpl, date: date);
   }
 
@@ -138,20 +149,39 @@ class DataService {
   }
 
   DashboardData _buildData(String tpl, String date, int tick) {
-    final labels = List.generate(24, (i) => '${i.toString().padLeft(2, '0')}:00');
+    final labels = List.generate(
+      24,
+      (i) => '${i.toString().padLeft(2, '0')}:00',
+    );
     final seed = _hash('$tpl|$date');
     final base = 0.8 + (seed % 5) * 0.25;
-    
-    final hourlyBar = List<double>.generate(24, (i) => _seriesValue(
-      hour: i, base: base, seed: seed, tick: tick, scale: 0.18, drift: 0.8,
-    ));
-    
-    final hourlyBar2 = List<double>.generate(24, (i) => _seriesValue(
-      hour: i, base: base * 0.8, seed: seed + 3, tick: tick, scale: 0.12, drift: 0.6,
-    ));
-    
+
+    final hourlyBar = List<double>.generate(
+      24,
+      (i) => _seriesValue(
+        hour: i,
+        base: base,
+        seed: seed,
+        tick: tick,
+        scale: 0.18,
+        drift: 0.8,
+      ),
+    );
+
+    final hourlyBar2 = List<double>.generate(
+      24,
+      (i) => _seriesValue(
+        hour: i,
+        base: base * 0.8,
+        seed: seed + 3,
+        tick: tick,
+        scale: 0.12,
+        drift: 0.6,
+      ),
+    );
+
     final dailyUsed = _buildDailyWindow(date, seed, base, tick);
-    
+
     return DashboardData(
       labels: labels,
       hourlyBar: hourlyBar,
@@ -161,7 +191,10 @@ class DataService {
   }
 
   static List<String> _buildDates(DateTime anchor, int count) {
-    return List.generate(count, (i) => _formatDate(anchor.subtract(Duration(days: i))));
+    return List.generate(
+      count,
+      (i) => _formatDate(anchor.subtract(Duration(days: i))),
+    );
   }
 
   static String _formatDate(DateTime date) {
@@ -180,21 +213,36 @@ class DataService {
   }
 
   double _seriesValue({
-    required int hour, required double base, required int seed,
-    required int tick, required double scale, required double drift,
+    required int hour,
+    required double base,
+    required int seed,
+    required int tick,
+    required double scale,
+    required double drift,
   }) {
     final bump = ((hour % 6) + 1) * scale;
     final wave = ((seed + hour) % 7) * 0.03;
-    final value = base + bump + (hour / 24) * drift + tick * 0.05 + (hour.isEven ? wave : -wave);
+    final value =
+        base +
+        bump +
+        (hour / 24) * drift +
+        tick * 0.05 +
+        (hour.isEven ? wave : -wave);
     return _round(value);
   }
 
-  List<Map<String, dynamic>> _buildDailyWindow(String date, int seed, double base, int tick) {
+  List<Map<String, dynamic>> _buildDailyWindow(
+    String date,
+    int seed,
+    double base,
+    int tick,
+  ) {
     final start = DateTime.parse(date);
     final items = <Map<String, dynamic>>[];
-    for (var i = 0; i < 7; i++) {
+    for (var i = 0; i < 30; i++) {
       final day = start.subtract(Duration(days: i));
-      final level = base * 3 + ((seed + i) % 5) * 0.7 + (6 - i) * 0.5 + tick * 0.2;
+      final level =
+          base * 6 + ((seed + i) % 9) * 0.8 + (i % 6) * 0.45 + tick * 0.2;
       items.add({'x': _formatDate(day), 'y': _round(level)});
     }
     return items;

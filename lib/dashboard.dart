@@ -11,6 +11,8 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   final DataService _service = DataService();
+  final ScrollController _hourlyScrollController = ScrollController();
+  final ScrollController _dailyScrollController = ScrollController();
   DashboardData? _data;
   bool _loading = false;
   String _selectedSection = 'Main';
@@ -32,6 +34,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   void dispose() {
+    _hourlyScrollController.dispose();
+    _dailyScrollController.dispose();
     _service.stopSimulation(); // Prevent memory leaks
     super.dispose();
   }
@@ -468,112 +472,124 @@ class _DashboardPageState extends State<DashboardPage> {
         final isCompact = constraints.maxWidth < 520;
         final labels = data.labels;
         final maxY = _chartMax([...data.hourlyBar, ...data.hourlyBar2]);
+        final chartWidth = constraints.maxWidth > 760
+            ? constraints.maxWidth
+            : 760.0;
         return _panel(
           title: 'Hourly Usage',
           subtitle: 'Mixed bars and trend lines',
-          child: SizedBox(
-            height: isCompact ? 240 : 320,
-            child: Stack(
-              children: [
-                BarChart(
-                  BarChartData(
-                    minY: 0,
-                    maxY: maxY,
-                    alignment: BarChartAlignment.spaceAround,
-                    gridData: FlGridData(
-                      show: true,
-                      drawVerticalLine: true,
-                      getDrawingHorizontalLine: (v) => FlLine(
-                        color: Colors.grey.withOpacity(0.1),
-                        strokeWidth: 1,
+          child: Scrollbar(
+            controller: _hourlyScrollController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _hourlyScrollController,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: chartWidth,
+                height: isCompact ? 240 : 320,
+                child: Stack(
+                  children: [
+                    BarChart(
+                      BarChartData(
+                        minY: 0,
+                        maxY: maxY,
+                        alignment: BarChartAlignment.spaceAround,
+                        gridData: FlGridData(
+                          show: true,
+                          drawVerticalLine: true,
+                          getDrawingHorizontalLine: (v) => FlLine(
+                            color: Colors.grey.withOpacity(0.1),
+                            strokeWidth: 1,
+                          ),
+                        ),
+                        borderData: FlBorderData(show: false),
+                        barGroups: List.generate(24, (i) {
+                          final y = i < data.hourlyBar.length
+                              ? data.hourlyBar[i]
+                              : 0.0;
+                          final y2 = i < data.hourlyBar2.length
+                              ? data.hourlyBar2[i]
+                              : 0.0;
+                          return BarChartGroupData(
+                            x: i,
+                            barsSpace: isCompact ? 3 : 4,
+                            barRods: [
+                              if (_showPreviousBar)
+                                BarChartRodData(
+                                  toY: y,
+                                  color: const Color(0xFF1997FF),
+                                  width: isCompact ? 6 : 8,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              if (_showSelectedBar)
+                                BarChartRodData(
+                                  toY: y2,
+                                  color: const Color(0xFFFF8A00),
+                                  width: isCompact ? 6 : 8,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                            ],
+                          );
+                        }),
+                        titlesData: _hourTitles(
+                          labels,
+                          step: isCompact ? 3 : 1,
+                          compact: isCompact,
+                        ),
                       ),
                     ),
-                    borderData: FlBorderData(show: false),
-                    barGroups: List.generate(24, (i) {
-                      final y = i < data.hourlyBar.length
-                          ? data.hourlyBar[i]
-                          : 0.0;
-                      final y2 = i < data.hourlyBar2.length
-                          ? data.hourlyBar2[i]
-                          : 0.0;
-                      return BarChartGroupData(
-                        x: i,
-                        barsSpace: isCompact ? 3 : 4,
-                        barRods: [
-                          if (_showPreviousBar)
-                            BarChartRodData(
-                              toY: y,
-                              color: const Color(0xFF1997FF),
-                              width: isCompact ? 6 : 8,
-                              borderRadius: BorderRadius.circular(2),
+                    LineChart(
+                      LineChartData(
+                        minY: 0,
+                        maxY: maxY,
+                        gridData: FlGridData(show: false),
+                        borderData: FlBorderData(show: false),
+                        titlesData: FlTitlesData(show: false),
+                        lineBarsData: [
+                          if (_showPreviousTrend)
+                            LineChartBarData(
+                              spots: List.generate(
+                                24,
+                                (i) => FlSpot(
+                                  i.toDouble(),
+                                  i < data.hourlyBar.length
+                                      ? data.hourlyBar[i]
+                                      : 0.0,
+                                ),
+                              ),
+                              isCurved: true,
+                              color: const Color(0xFF1A39FF),
+                              barWidth: isCompact ? 2.5 : 3,
+                              dotData: const FlDotData(show: false),
                             ),
-                          if (_showSelectedBar)
-                            BarChartRodData(
-                              toY: y2,
-                              color: const Color(0xFFFF8A00),
-                              width: isCompact ? 6 : 8,
-                              borderRadius: BorderRadius.circular(2),
+                          if (_showSelectedTrend)
+                            LineChartBarData(
+                              spots: List.generate(
+                                24,
+                                (i) => FlSpot(
+                                  i.toDouble(),
+                                  i < data.hourlyBar2.length
+                                      ? data.hourlyBar2[i]
+                                      : 0.0,
+                                ),
+                              ),
+                              isCurved: true,
+                              color: const Color(0xFF7BC67E),
+                              barWidth: isCompact ? 2 : 2.5,
+                              dotData: const FlDotData(show: false),
                             ),
                         ],
-                      );
-                    }),
-                    titlesData: _hourTitles(
-                      labels,
-                      step: isCompact ? 3 : 1,
-                      compact: isCompact,
+                      ),
                     ),
-                  ),
+                    Positioned(
+                      top: 4,
+                      left: 0,
+                      right: 0,
+                      child: _chartLegend(compact: isCompact),
+                    ),
+                  ],
                 ),
-                LineChart(
-                  LineChartData(
-                    minY: 0,
-                    maxY: maxY,
-                    gridData: FlGridData(show: false),
-                    borderData: FlBorderData(show: false),
-                    titlesData: FlTitlesData(show: false),
-                    lineBarsData: [
-                      if (_showPreviousTrend)
-                        LineChartBarData(
-                          spots: List.generate(
-                            24,
-                            (i) => FlSpot(
-                              i.toDouble(),
-                              i < data.hourlyBar.length
-                                  ? data.hourlyBar[i]
-                                  : 0.0,
-                            ),
-                          ),
-                          isCurved: true,
-                          color: const Color(0xFF1A39FF),
-                          barWidth: isCompact ? 2.5 : 3,
-                          dotData: const FlDotData(show: false),
-                        ),
-                      if (_showSelectedTrend)
-                        LineChartBarData(
-                          spots: List.generate(
-                            24,
-                            (i) => FlSpot(
-                              i.toDouble(),
-                              i < data.hourlyBar2.length
-                                  ? data.hourlyBar2[i]
-                                  : 0.0,
-                            ),
-                          ),
-                          isCurved: true,
-                          color: const Color(0xFF7BC67E),
-                          barWidth: isCompact ? 2 : 2.5,
-                          dotData: const FlDotData(show: false),
-                        ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  top: 4,
-                  left: 0,
-                  right: 0,
-                  child: _chartLegend(compact: isCompact),
-                ),
-              ],
+              ),
             ),
           ),
         );
@@ -589,72 +605,109 @@ class _DashboardPageState extends State<DashboardPage> {
             .map((e) => (e['y'] as double) * 0.9)
             .toList();
         final maxY = _chartMax(barValues, min: 1.0, padding: 2.0);
+        final dailyTotal = data.dailyUsed.fold<double>(
+          0,
+          (sum, item) => sum + (item['y'] as double),
+        );
+        final dailyAverage = data.dailyUsed.isEmpty
+            ? 0.0
+            : dailyTotal / data.dailyUsed.length;
+        final chartWidth = constraints.maxWidth > data.dailyUsed.length * 38.0
+            ? constraints.maxWidth
+            : data.dailyUsed.length * 38.0;
         return _panel(
           title: 'Daily Usage',
           subtitle: 'Recent days and live reading trend',
-          child: SizedBox(
-            height: isCompact ? 220 : 280,
-            child: Stack(
-              children: [
-                BarChart(
-                  BarChartData(
-                    minY: 0,
-                    maxY: maxY,
-                    gridData: FlGridData(
-                      show: true,
-                      drawVerticalLine: false,
-                      getDrawingHorizontalLine: (v) => FlLine(
-                        color: Colors.grey.withOpacity(0.1),
-                        strokeWidth: 1,
-                      ),
-                    ),
-                    borderData: FlBorderData(show: false),
-                    barGroups: List.generate(data.dailyUsed.length, (i) {
-                      return BarChartGroupData(
-                        x: i,
-                        barRods: [
-                          BarChartRodData(
-                            toY: barValues[i],
-                            width: isCompact ? 8 : 10,
-                            color: i % 4 == 0
-                                ? const Color(0xFFFF8D8D)
-                                : const Color(0xFF9EC5E6),
+          child: Scrollbar(
+            controller: _dailyScrollController,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _dailyScrollController,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: chartWidth,
+                height: isCompact ? 220 : 280,
+                child: Stack(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 18),
+                      child: BarChart(
+                        BarChartData(
+                          minY: 0,
+                          maxY: maxY,
+                          gridData: FlGridData(
+                            show: true,
+                            drawVerticalLine: false,
+                            getDrawingHorizontalLine: (v) => FlLine(
+                              color: Colors.grey.withOpacity(0.1),
+                              strokeWidth: 1,
+                            ),
                           ),
-                        ],
-                      );
-                    }),
-                    titlesData: _dayTitles(
-                      data.dailyUsed,
-                      step: isCompact ? 2 : 1,
-                      compact: isCompact,
-                    ),
-                  ),
-                ),
-                LineChart(
-                  LineChartData(
-                    minY: 0,
-                    maxY: maxY,
-                    gridData: FlGridData(show: false),
-                    borderData: FlBorderData(show: false),
-                    titlesData: FlTitlesData(show: false),
-                    lineBarsData: [
-                      LineChartBarData(
-                        spots: List.generate(
-                          data.dailyUsed.length,
-                          (i) => FlSpot(
-                            i.toDouble(),
-                            data.dailyUsed[i]['y'] as double,
+                          borderData: FlBorderData(show: false),
+                          barGroups: List.generate(data.dailyUsed.length, (i) {
+                            return BarChartGroupData(
+                              x: i,
+                              barRods: [
+                                BarChartRodData(
+                                  toY: barValues[i],
+                                  width: isCompact ? 8 : 10,
+                                  color: i % 4 == 0
+                                      ? const Color(0xFFFF8D8D)
+                                      : const Color(0xFF9EC5E6),
+                                ),
+                              ],
+                            );
+                          }),
+                          titlesData: _dayTitles(
+                            data.dailyUsed,
+                            step: isCompact ? 3 : 1,
+                            compact: isCompact,
                           ),
                         ),
-                        isCurved: true,
-                        color: Colors.redAccent,
-                        barWidth: isCompact ? 2.5 : 3,
-                        dotData: const FlDotData(show: true),
                       ),
-                    ],
-                  ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 18),
+                      child: LineChart(
+                        LineChartData(
+                          minY: 0,
+                          maxY: maxY,
+                          gridData: FlGridData(show: false),
+                          borderData: FlBorderData(show: false),
+                          titlesData: FlTitlesData(show: false),
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: List.generate(
+                                data.dailyUsed.length,
+                                (i) => FlSpot(
+                                  i.toDouble(),
+                                  data.dailyUsed[i]['y'] as double,
+                                ),
+                              ),
+                              isCurved: true,
+                              color: Colors.redAccent,
+                              barWidth: isCompact ? 2.5 : 3,
+                              dotData: const FlDotData(show: true),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 2,
+                      bottom: 0,
+                      child: Text(
+                        'Average (of last 30 days): ${dailyAverage.toStringAsFixed(2)}kWh Total: ${dailyTotal.toStringAsFixed(2)}kWh',
+                        style: TextStyle(
+                          color: Colors.grey.shade300,
+                          fontSize: isCompact ? 9 : 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         );
